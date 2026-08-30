@@ -35,8 +35,15 @@
 
     function checkpointAvailable() {
         const kag = engine();
-        return Boolean(!exited && !paused && kag && kag.stat &&
-            typeof kag.stat.current_scenario === "string" && kag.stat.current_scenario.length > 0);
+        if (exited || !kag || !kag.stat || typeof kag.stat.current_scenario !== "string" ||
+            !kag.stat.current_scenario || kag.stat.is_wait || kag.stat.is_adding_text) return false;
+        const canShowMenu = kag.key_mouse && kag.key_mouse.util && kag.key_mouse.util.canShowMenu;
+        if (typeof canShowMenu !== "function") return true;
+        try {
+            return Boolean(canShowMenu.call(kag.key_mouse.util));
+        } catch {
+            return false;
+        }
     }
 
     function envelope(requestId, type, body) {
@@ -87,6 +94,7 @@
     function validateSnapshot(snapshot) {
         if (!snapshot || typeof snapshot !== "object" || Array.isArray(snapshot) ||
             !snapshot.stat || typeof snapshot.stat !== "object" || Array.isArray(snapshot.stat) ||
+            typeof snapshot.stat.current_scenario !== "string" || !snapshot.stat.current_scenario ||
             !Number.isSafeInteger(snapshot.current_order_index) || snapshot.current_order_index < -1 ||
             !("layer" in snapshot) || !snapshot.three || typeof snapshot.three !== "object") {
             throw new Error("TYRANOSCRIPT_CHECKPOINT_INVALID");
@@ -134,9 +142,18 @@
         const kag = engine();
         return new Promise((resolve, reject) => {
             let completed = false;
+            const restoreWeakStop = paused;
+            if (restoreWeakStop && typeof kag.cancelWeakStop === "function") {
+                kag.cancelWeakStop();
+                paused = false;
+            }
             function finish(error) {
                 if (completed) return;
                 completed = true;
+                if (restoreWeakStop) {
+                    if (typeof kag.weaklyStop === "function") kag.weaklyStop();
+                    paused = true;
+                }
                 if (error) reject(error);
                 else {
                     try {
@@ -161,18 +178,35 @@
         if (!kag) return Promise.reject(new Error("TYRANOSCRIPT_RUNTIME_NOT_READY"));
         return new Promise((resolve, reject) => {
             let completed = false;
+            let makeStarted = false;
+            let pollTimer = 0;
             const timer = global.setTimeout(() => finish(new Error("TYRANOSCRIPT_CHECKPOINT_RESTORE_TIMEOUT")), RESTORE_TIMEOUT_MS);
             function finish(error) {
                 if (completed) return;
                 completed = true;
                 global.clearTimeout(timer);
+                if (pollTimer) global.clearTimeout(pollTimer);
                 if (typeof kag.off === "function") kag.off(".retrom-runtime-restore");
                 if (error) reject(error);
                 else resolve();
             }
+            function pollTarget() {
+                if (completed) return;
+                if (makeStarted && kag.stat.current_scenario === snapshot.stat.current_scenario &&
+                    kag.ftag && kag.ftag.current_order_index === snapshot.current_order_index + 1) {
+                    finish();
+                    return;
+                }
+                pollTimer = global.setTimeout(pollTarget, 16);
+            }
+            function observeRestoreOrder(eventObject) {
+                if (eventObject && eventObject.scenario === "make.ks") makeStarted = true;
+            }
             try {
                 kag.once("load-complete.retrom-runtime-restore", () => finish());
+                kag.on("nextorder.retrom-runtime-restore", observeRestoreOrder);
                 kag.menu.loadGameData(snapshot, { auto_next: "no", bgm_over: "false" });
+                pollTarget();
             } catch {
                 finish(new Error("TYRANOSCRIPT_CHECKPOINT_RESTORE_FAILED"));
             }
@@ -208,7 +242,7 @@
         if (kag && typeof kag.weaklyStop === "function") kag.weaklyStop();
         pauseAudio();
         paused = true;
-        event("CHECKPOINT_AVAILABILITY", { available: false });
+        event("CHECKPOINT_AVAILABILITY", { available: checkpointAvailable() });
     }
 
     function resume() {
