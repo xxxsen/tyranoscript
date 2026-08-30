@@ -15,4 +15,5 @@ studio_config.json
 
 # Node, npm
 node_modules
+.github/rpg-runtime/__pycache__/
 package-lock.json
