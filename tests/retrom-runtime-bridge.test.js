@@ -20,7 +20,7 @@ function runtimeFixture({ emitLoadComplete = true, checkpointReady = true } = {}
     let restoreOptions = null;
     let canShowMenu = checkpointReady;
     const kag = {
-        ftag: { current_order_index: 0 },
+        ftag: { array_tag: [{ name: "s" }], current_order_index: 0 },
         key_mouse: { util: { canShowMenu: () => canShowMenu } },
         stat: { current_scenario: "first.ks", f: { marker: "A" } },
         menu: {
@@ -155,6 +155,7 @@ function runtimeFixture({ emitLoadComplete = true, checkpointReady = true } = {}
         restoreOptions: () => restoreOptions,
         runtime,
         setCheckpointReady(value) { canShowMenu = value; },
+        setCurrentTag(name) { kag.ftag.array_tag[0].name = name; },
     };
 }
 
@@ -203,6 +204,16 @@ test("keeps checkpoints unavailable while the engine is between stable menu stat
     assert.equal((await fixture.request("CHECKPOINT")).body.code, "TYRANOSCRIPT_CHECKPOINT_UNAVAILABLE");
 
     fixture.setCheckpointReady(true);
+    assert.equal((await fixture.request("PROBE")).body.checkpointAvailable, true);
+});
+
+test("does not advertise a checkpoint while an active scenario tag is running", async () => {
+    const fixture = runtimeFixture();
+    fixture.setCurrentTag("bg");
+    assert.equal((await fixture.request("PROBE")).body.checkpointAvailable, false);
+    assert.equal((await fixture.request("CHECKPOINT")).body.code, "TYRANOSCRIPT_CHECKPOINT_UNAVAILABLE");
+
+    fixture.setCurrentTag("s");
     assert.equal((await fixture.request("PROBE")).body.checkpointAvailable, true);
 });
 
