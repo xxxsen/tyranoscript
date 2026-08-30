@@ -36,7 +36,8 @@
     function checkpointAvailable() {
         const kag = engine();
         if (exited || !kag || !kag.stat || typeof kag.stat.current_scenario !== "string" ||
-            !kag.stat.current_scenario || kag.stat.is_wait || kag.stat.is_adding_text) return false;
+            !kag.stat.current_scenario || kag.stat.is_wait || kag.stat.is_adding_text ||
+            !stableCheckpointTag(kag)) return false;
         const canShowMenu = kag.key_mouse && kag.key_mouse.util && kag.key_mouse.util.canShowMenu;
         if (typeof canShowMenu !== "function") return true;
         try {
@@ -44,6 +45,13 @@
         } catch {
             return false;
         }
+    }
+
+    function stableCheckpointTag(kag) {
+        const ftag = kag.ftag;
+        if (!ftag || !Number.isSafeInteger(ftag.current_order_index) || !Array.isArray(ftag.array_tag)) return false;
+        const current = ftag.array_tag[ftag.current_order_index];
+        return Boolean(current && ["text", "l", "p", "s"].includes(current.name));
     }
 
     function envelope(requestId, type, body) {
