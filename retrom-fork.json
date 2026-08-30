@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "forkRepository": "https://github.com/xxxsen/tyranoscript",
+  "defaultBranch": "retrom/gc8dbfd492afd",
+  "upstreamMirrorBranch": "master",
+  "upstreams": [
+    {
+      "role": "engine-baseline",
+      "repository": "https://github.com/ShikemokuMK/tyranoscript",
+      "refType": "COMMIT",
+      "ref": "c8dbfd492afd3d79b0954fcf4477236f5c6c4830",
+      "commit": "c8dbfd492afd3d79b0954fcf4477236f5c6c4830"
+    }
+  ],
+  "releaseMode": "HOST_BRIDGE_ONLY",
+  "releaseTagPattern": "^rpg-runtime-gc8dbfd492afd-r[1-9][0-9]*(-rc\\.[1-9][0-9]*)?$",
+  "adapterAbi": "tyranoscript-snapshot-v1",
+  "releaseAssets": [
+    "retrom-tyranoscript-bridge.js",
+    "RETROM-BRIDGE-LICENSE",
+    "rpg-runtime-release.json"
+  ]
+}
