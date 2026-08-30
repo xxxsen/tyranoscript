@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import os
 import pathlib
 import re
 import subprocess
@@ -42,8 +43,9 @@ def main() -> None:
         "RETROM-BRIDGE-LICENSE",
         "rpg-runtime-release.json",
     ]
-    assert git("merge-base", "--is-ancestor", BASELINE, "HEAD") == ""
-    assert not git("rev-list", "--min-parents=2", f"{BASELINE}..HEAD")
+    revision = "HEAD^2" if os.environ.get("GITHUB_EVENT_NAME") == "pull_request" else "HEAD"
+    assert git("merge-base", "--is-ancestor", BASELINE, revision) == ""
+    assert not git("rev-list", "--min-parents=2", f"{BASELINE}..{revision}")
     print("retrom TyranoScript fork source contract: ok")
 
 
