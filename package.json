@@ -17,9 +17,13 @@
 	},
 	"scripts": {
 		"lint": "eslint --ext .js ./tyrano",
-		"format": "prettier --write ./tyrano/**/*.js"
+		"lint:retrom-runtime": "eslint retrom-runtime/bridge.js tests/retrom-runtime-bridge.test.js tests/browser/retrom-runtime-bridge.spec.js playwright.config.js",
+		"format": "prettier --write ./tyrano/**/*.js",
+		"test:retrom-runtime": "node --test tests/retrom-runtime-bridge.test.js",
+		"test:retrom-runtime-browser": "playwright test"
 	},
 	"devDependencies": {
+		"@playwright/test": "1.62.1",
 		"eslint": "^8.20.0",
 		"eslint-config-prettier": "^8.5.0",
 		"prettier": "^2.7.1"

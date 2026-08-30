@@ -1,0 +1,65 @@
+name: RPG Runtime Release
+
+on:
+  push:
+    tags: ["rpg-runtime-gc8dbfd492afd-r*"]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: rpg-runtime-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.15.0
+          cache: npm
+      - name: Validate immutable release identity
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_REF_NAME" =~ ^rpg-runtime-gc8dbfd492afd-r[1-9][0-9]*(-rc\.[1-9][0-9]*)?$ ]]
+          git fetch --force origin "refs/tags/$GITHUB_REF_NAME:refs/tags/$GITHUB_REF_NAME"
+          test "$(git cat-file -t "refs/tags/$GITHUB_REF_NAME")" = tag
+          test "$(git rev-list -n 1 "refs/tags/$GITHUB_REF_NAME")" = "$GITHUB_SHA"
+          git fetch --no-tags origin '+refs/heads/retrom/gc8dbfd492afd:refs/remotes/origin/retrom/gc8dbfd492afd'
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/retrom/gc8dbfd492afd
+          test -z "$(git rev-list --min-parents=2 c8dbfd492afd3d79b0954fcf4477236f5c6c4830.."$GITHUB_SHA")"
+          python3 .github/rpg-runtime/verify-source.py
+      - name: Install test dependencies
+        run: npm ci
+      - name: Run bridge and release unit tests
+        run: |
+          npm run test:retrom-runtime
+          python3 -m unittest tests.test_retrom_release
+      - name: Install Chrome for Testing
+        run: npx playwright install --with-deps chromium
+      - name: Run the upstream sample lifecycle test
+        run: npm run test:retrom-runtime-browser
+      - name: Build bridge-only release
+        run: |
+          python3 .github/rpg-runtime/build-release.py \
+            --output "$RUNNER_TEMP/rpg-runtime-output" \
+            --repository "https://github.com/$GITHUB_REPOSITORY" \
+            --tag "$GITHUB_REF_NAME" \
+            --commit "$GITHUB_SHA"
+      - name: Create immutable-tag release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          prerelease=()
+          if [[ "$GITHUB_REF_NAME" == *-rc.* ]]; then prerelease+=(--prerelease); fi
+          gh release create "$GITHUB_REF_NAME" "${prerelease[@]}" \
+            --verify-tag --target "$GITHUB_SHA" \
+            --title "TyranoScript host bridge $GITHUB_REF_NAME" --generate-notes \
+            "$RUNNER_TEMP/rpg-runtime-output/retrom-tyranoscript-bridge.js" \
+            "$RUNNER_TEMP/rpg-runtime-output/RETROM-BRIDGE-LICENSE" \
+            "$RUNNER_TEMP/rpg-runtime-output/rpg-runtime-release.json"
