@@ -10,7 +10,7 @@ function plain(value) {
     return JSON.parse(JSON.stringify(value));
 }
 
-function runtimeFixture() {
+function runtimeFixture({ emitLoadComplete = true, checkpointReady = true } = {}) {
     const windowListeners = new Map();
     const engineListeners = new Map();
     const frameCallbacks = [];
@@ -18,7 +18,10 @@ function runtimeFixture() {
     const actions = [];
     let closeCalls = 0;
     let restoreOptions = null;
+    let canShowMenu = checkpointReady;
     const kag = {
+        ftag: { current_order_index: 0 },
+        key_mouse: { util: { canShowMenu: () => canShowMenu } },
         stat: { current_scenario: "first.ks", f: { marker: "A" } },
         menu: {
             snap: null,
@@ -36,12 +39,29 @@ function runtimeFixture() {
             loadGameData(snapshot, options) {
                 actions.push("restore");
                 restoreOptions = options;
-                kag.stat = JSON.parse(JSON.stringify(snapshot.stat));
                 queueMicrotask(() => {
-                    for (const listener of engineListeners.get("load-complete") || []) listener.callback();
-                    engineListeners.delete("load-complete");
+                    for (const listener of engineListeners.get("nextorder") || []) listener.callback({
+                        index: snapshot.current_order_index + 1,
+                        scenario: snapshot.stat.current_scenario,
+                    });
+                    kag.stat.current_scenario = "make.ks";
+                    for (const listener of engineListeners.get("nextorder") || []) {
+                        listener.callback({ index: 0, scenario: "make.ks" });
+                    }
+                    queueMicrotask(() => {
+                        kag.stat = JSON.parse(JSON.stringify(snapshot.stat));
+                        kag.ftag.current_order_index = snapshot.current_order_index + 1;
+                        if (emitLoadComplete) {
+                            for (const listener of engineListeners.get("load-complete") || []) listener.callback();
+                            engineListeners.delete("load-complete");
+                        }
+                    });
                 });
             },
+        },
+        on(eventName, callback) {
+            const event = eventName.split(".")[0];
+            engineListeners.set(event, [...(engineListeners.get(event) || []), { callback }]);
         },
         once(eventName, callback) {
             const event = eventName.split(".")[0];
@@ -117,7 +137,7 @@ function runtimeFixture() {
             sessionId: "test-session",
             type,
         } });
-        for (let attempt = 0; attempt < 10; attempt += 1) {
+        for (let attempt = 0; attempt < 50; attempt += 1) {
             await new Promise((resolvePromise) => setTimeout(resolvePromise, 0));
             const reply = replies.find((value) => value.requestId === requestId);
             if (reply) return reply;
@@ -134,6 +154,7 @@ function runtimeFixture() {
         request,
         restoreOptions: () => restoreOptions,
         runtime,
+        setCheckpointReady(value) { canShowMenu = value; },
     };
 }
 
@@ -164,14 +185,42 @@ test("checkpoints and restores the TyranoScript snapshot in the same wire format
     assert.deepEqual(fixture.actions.slice(0, 2), ["checkpoint:false", "restore"]);
 });
 
+test("recognizes a completed restore when the engine omits load-complete", async () => {
+    const fixture = runtimeFixture({ emitLoadComplete: false });
+    fixture.kag.stat.f.marker = "B";
+    const saved = await fixture.request("CHECKPOINT");
+    fixture.kag.stat.f.marker = "C";
+
+    const restored = await fixture.request("RESTORE", { data: saved.body.data });
+
+    assert.equal(restored.type, "RESTORE_RESULT");
+    assert.equal(fixture.kag.stat.f.marker, "B");
+});
+
+test("keeps checkpoints unavailable while the engine is between stable menu states", async () => {
+    const fixture = runtimeFixture({ checkpointReady: false });
+    assert.equal((await fixture.request("PROBE")).body.checkpointAvailable, false);
+    assert.equal((await fixture.request("CHECKPOINT")).body.code, "TYRANOSCRIPT_CHECKPOINT_UNAVAILABLE");
+
+    fixture.setCheckpointReady(true);
+    assert.equal((await fixture.request("PROBE")).body.checkpointAvailable, true);
+});
+
 test("pauses audio, resumes input state, and updates checkpoint availability", async () => {
     const fixture = runtimeFixture();
     assert.equal((await fixture.request("PAUSE")).type, "PAUSE_RESULT");
     assert.deepEqual(fixture.actions, ["pause", "audio-pause:7"]);
-    assert.equal((await fixture.request("PROBE")).body.checkpointAvailable, false);
+    assert.equal((await fixture.request("PROBE")).body.checkpointAvailable, true);
+    fixture.kag.stat.f.marker = "PAUSED";
+    const checkpoint = await fixture.request("CHECKPOINT");
+    assert.equal(checkpoint.type, "CHECKPOINT_RESULT");
+    const decoded = JSON.parse(new TextDecoder().decode(new Uint8Array(checkpoint.body.data)));
+    assert.equal(decoded.snapshot.stat.f.marker, "PAUSED");
 
     assert.equal((await fixture.request("RESUME")).type, "RESUME_RESULT");
-    assert.deepEqual(fixture.actions, ["pause", "audio-pause:7", "resume", "audio-resume:7"]);
+    assert.deepEqual(fixture.actions, [
+        "pause", "audio-pause:7", "resume", "checkpoint:false", "pause", "resume", "audio-resume:7",
+    ]);
     assert.equal((await fixture.request("SET_VOLUME", { value: 0.4 })).type, "SET_VOLUME_RESULT");
     assert.equal(fixture.actions.at(-1), "volume:0.4");
     assert.equal((await fixture.request("PROBE")).body.checkpointAvailable, true);

@@ -52,11 +52,18 @@ test("restores the upstream sample in a fresh engine state and keeps gamepad inp
         }, location.origin, [channel.port2]);
     });
     await page.waitForFunction(() => window.__retromReplies.some((reply) => reply.type === "READY"));
+    await expect.poll(() => page.evaluate(async () => {
+        const probe = await window.__retromRuntimeRequest("PROBE");
+        return probe.body.checkpointAvailable;
+    })).toBe(true);
 
     const result = await page.evaluate(async () => {
+        const paused = await window.__retromRuntimeRequest("PAUSE");
         window.TYRANO.kag.stat.f.__retrom_checkpoint_marker = "B";
         const checkpoint = await window.__retromRuntimeRequest("CHECKPOINT");
         if (checkpoint.type !== "CHECKPOINT_RESULT") return { checkpointType: checkpoint.type };
+        const decodedCheckpoint = JSON.parse(new TextDecoder().decode(new Uint8Array(checkpoint.body.data)));
+        const resumed = await window.__retromRuntimeRequest("RESUME");
         window.TYRANO.kag.stat.f.__retrom_checkpoint_marker = "C";
         const restored = await window.__retromRuntimeRequest("RESTORE", { data: checkpoint.body.data });
         return {
@@ -64,7 +71,11 @@ test("restores the upstream sample in a fresh engine state and keeps gamepad inp
             checkpointFormat: checkpoint.body.format,
             checkpointType: checkpoint.type,
             marker: window.TYRANO.kag.stat.f.__retrom_checkpoint_marker,
+            pauseType: paused.type,
+            resumeType: resumed.type,
+            restoreCode: restored.body.code || null,
             restoreType: restored.type,
+            savedScenario: decodedCheckpoint.snapshot.stat.current_scenario,
         };
     });
     expect(result).toEqual({
@@ -72,7 +83,11 @@ test("restores the upstream sample in a fresh engine state and keeps gamepad inp
         checkpointFormat: "tyranoscript-snapshot-v1",
         checkpointType: "CHECKPOINT_RESULT",
         marker: "B",
+        pauseType: "PAUSE_RESULT",
+        resumeType: "RESUME_RESULT",
+        restoreCode: null,
         restoreType: "RESTORE_RESULT",
+        savedScenario: expect.any(String),
     });
     expect(result.checkpointBytes).toBeGreaterThan(100);
 
