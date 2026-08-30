@@ -67,6 +67,7 @@ function runtimeFixture() {
         clearTimeout,
         close() { closeCalls += 1; },
         parent: null,
+        postMessage() {},
         removeEventListener(name) { windowListeners.delete(name); },
         requestAnimationFrame(callback) { frameCallbacks.push(callback); return frameCallbacks.length; },
         setTimeout,

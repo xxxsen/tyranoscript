@@ -338,4 +338,7 @@
     }
 
     global.addEventListener("message", connect, true);
+    if (global.parent && typeof global.parent.postMessage === "function") {
+        global.parent.postMessage({ protocolVersion: PROTOCOL_VERSION, type: "GAME_RUNTIME_TYRANOSCRIPT_BRIDGE_READY" }, "*");
+    }
 })(window);
