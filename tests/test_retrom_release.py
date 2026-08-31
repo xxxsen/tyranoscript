@@ -19,8 +19,8 @@ class RetromReleaseTests(unittest.TestCase):
             output = pathlib.Path(temporary)
             BUILD_RELEASE.build(
                 output,
-                "https://github.com/xxxsen/tyranoscript",
-                "rpg-runtime-gc8dbfd492afd-r1-rc.1",
+                "https://github.com/retrom-project/tyranoscript",
+                "retrom-core-gc8dbfd492afd-r1-rc.1",
                 "1" * 40,
             )
             self.assertEqual(
@@ -41,7 +41,7 @@ class RetromReleaseTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "RELEASE_TAG_INVALID"):
                 BUILD_RELEASE.build(
                     pathlib.Path(temporary),
-                    "https://github.com/xxxsen/tyranoscript",
+                    "https://github.com/retrom-project/tyranoscript",
                     "latest",
                     "1" * 40,
                 )

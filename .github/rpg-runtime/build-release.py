@@ -12,7 +12,7 @@ import shutil
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
-TAG_PATTERN = re.compile(r"^rpg-runtime-gc8dbfd492afd-r[1-9][0-9]*(-rc\.[1-9][0-9]*)?$")
+TAG_PATTERN = re.compile(r"^retrom-core-gc8dbfd492afd-r[1-9][0-9]*(-rc\.[1-9][0-9]*)?$")
 COMMIT_PATTERN = re.compile(r"^[0-9a-f]{40}$")
 ASSETS = {
     "retrom-tyranoscript-bridge.js": ROOT / "retrom-runtime" / "bridge.js",
@@ -29,7 +29,7 @@ def sha256(path: pathlib.Path) -> str:
 
 
 def build(output: pathlib.Path, repository: str, tag: str, commit: str) -> None:
-    if repository != "https://github.com/xxxsen/tyranoscript":
+    if repository != "https://github.com/retrom-project/tyranoscript":
         raise ValueError("RELEASE_REPOSITORY_INVALID")
     if not TAG_PATTERN.fullmatch(tag):
         raise ValueError("RELEASE_TAG_INVALID")

@@ -54,8 +54,10 @@ review workflows, credentials, or private games.
   sample-project lifecycle test registered by the quality workflow.
 - PRs to `retrom/gc8dbfd492afd` must pass
   `.github/workflows/rpg-runtime-quality.yml`.
-- Release tags are `rpg-runtime-gc8dbfd492afd-rN`, with optional `-rc.N` only
+- Release tags are `retrom-core-gc8dbfd492afd-rN`, with optional `-rc.N` only
   for integration candidates. Tags are annotated and immutable.
+- Existing `rpg-runtime-*` tags are immutable historical records. Never create
+  another tag in that retired namespace.
 - The tag workflow is the only supported release path. Repository, tag, tag
   commit, asset filename, and adapter ABI define identity; observed SHA-256 is
   cache-integrity information, not a compatibility identity.
