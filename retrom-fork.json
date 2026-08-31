@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "forkRepository": "https://github.com/xxxsen/tyranoscript",
+  "forkRepository": "https://github.com/retrom-project/tyranoscript",
   "defaultBranch": "retrom/gc8dbfd492afd",
   "upstreamMirrorBranch": "master",
   "upstreams": [
@@ -13,7 +13,7 @@
     }
   ],
   "releaseMode": "HOST_BRIDGE_ONLY",
-  "releaseTagPattern": "^rpg-runtime-gc8dbfd492afd-r[1-9][0-9]*(-rc\\.[1-9][0-9]*)?$",
+  "releaseTagPattern": "^retrom-core-gc8dbfd492afd-r[1-9][0-9]*(-rc\\.[1-9][0-9]*)?$",
   "adapterAbi": "tyranoscript-snapshot-v1",
   "releaseAssets": [
     "retrom-tyranoscript-bridge.js",

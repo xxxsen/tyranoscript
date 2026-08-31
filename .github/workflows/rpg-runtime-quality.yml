@@ -41,5 +41,5 @@ jobs:
           python3 .github/rpg-runtime/build-release.py \
             --output "$RUNNER_TEMP/rpg-runtime-output" \
             --repository "https://github.com/$GITHUB_REPOSITORY" \
-            --tag rpg-runtime-gc8dbfd492afd-r1-rc.1 \
+            --tag retrom-core-gc8dbfd492afd-r1-rc.1 \
             --commit "$GITHUB_SHA"

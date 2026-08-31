@@ -13,7 +13,7 @@ import subprocess
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 BASELINE = "c8dbfd492afd3d79b0954fcf4477236f5c6c4830"
 BRANCH = "retrom/gc8dbfd492afd"
-TAG_PATTERN = r"^rpg-runtime-gc8dbfd492afd-r[1-9][0-9]*(-rc\.[1-9][0-9]*)?$"
+TAG_PATTERN = r"^retrom-core-gc8dbfd492afd-r[1-9][0-9]*(-rc\.[1-9][0-9]*)?$"
 
 
 def git(*args: str) -> str:
@@ -27,7 +27,7 @@ def main() -> None:
     assert contract["upstreamMirrorBranch"] == "master"
     assert contract["releaseMode"] == "HOST_BRIDGE_ONLY"
     assert contract["releaseTagPattern"] == TAG_PATTERN
-    assert re.fullmatch(TAG_PATTERN, "rpg-runtime-gc8dbfd492afd-r1")
+    assert re.fullmatch(TAG_PATTERN, "retrom-core-gc8dbfd492afd-r1")
     assert contract["adapterAbi"] == "tyranoscript-snapshot-v1"
     assert contract["upstreams"] == [
         {
