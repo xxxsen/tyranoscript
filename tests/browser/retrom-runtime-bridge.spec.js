@@ -187,4 +187,28 @@ test("restores the upstream sample in a fresh engine state and keeps gamepad inp
     expect(domScreenshot.mediaType).toBe("image/jpeg");
     expect(domScreenshot.bytes).toBeGreaterThan(100);
     expect(domScreenshot.bytes).toBeLessThanOrEqual(2 * 1024 * 1024);
+
+    await page.evaluate(() => {
+        const video = document.createElement("video");
+        video.id = "retrom-blocked-autoplay-fixture";
+        video.autoplay = true;
+        video.play = () => {
+            window.__retromAutoplayAttempts = (window.__retromAutoplayAttempts || 0) + 1;
+            if (!video.muted) {
+                return Promise.reject(new DOMException("autoplay blocked", "NotAllowedError"));
+            }
+            window.__retromAutoplayStarted = true;
+            return Promise.resolve();
+        };
+        document.body.append(video);
+    });
+    await expect.poll(() => page.evaluate(() => ({
+        attempts: window.__retromAutoplayAttempts || 0,
+        muted: document.getElementById("retrom-blocked-autoplay-fixture").muted,
+        started: Boolean(window.__retromAutoplayStarted),
+    }))).toEqual({ attempts: 2, muted: true, started: true });
+    await page.keyboard.press("Space");
+    await expect.poll(() => page.evaluate(() =>
+        document.getElementById("retrom-blocked-autoplay-fixture").muted)).toBe(false);
+    await page.evaluate(() => document.getElementById("retrom-blocked-autoplay-fixture").remove());
 });

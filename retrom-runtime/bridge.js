@@ -37,6 +37,9 @@
     let legacyPlayBgmTag = null;
     let nativeLegacyPlayBgmStart = null;
     let legacyPlayBgmStart = null;
+    let autoplayUnmuteInstalled = false;
+    const autoplayAttempts = new WeakSet();
+    const mutedAutoplayMedia = new Set();
     const pendingAnimations = new WeakMap();
 
     const legacyButtonNames = [
@@ -97,7 +100,7 @@
         nativeLegacyMediaPlay = prototype.play;
         legacyMediaPlay = function playWithLegacyAutoplayFallback() {
             const media = this;
-            if (legacyAutoplayBlocked()) {
+            if (legacyAutoplayBlocked() && !isVideo(media)) {
                 return Promise.resolve().then(() => {
                     if (typeof media.dispatchEvent === "function") {
                         media.dispatchEvent(new global.Event("play"));
@@ -110,15 +113,72 @@
                 if (!error || error.name !== "NotAllowedError" || typeof media.dispatchEvent !== "function") {
                     throw error;
                 }
+                if (isVideo(media) && !media.muted) {
+                    media.muted = true;
+                    mutedAutoplayMedia.add(media);
+                    const retry = nativeLegacyMediaPlay.apply(media, arguments);
+                    if (!retry || typeof retry.catch !== "function") return retry;
+                    return retry.catch((retryError) => {
+                        mutedAutoplayMedia.delete(media);
+                        media.muted = false;
+                        throw retryError;
+                    });
+                }
                 media.dispatchEvent(new global.Event("play"));
             });
         };
         prototype.play = legacyMediaPlay;
+        installAutoplayUnmute();
     }
 
     function legacyAutoplayBlocked() {
         const activation = global.navigator && global.navigator.userActivation;
         return Boolean(activation && !activation.isActive && !activation.hasBeenActive);
+    }
+
+    function isVideo(media) {
+        return Boolean(media && media.tagName === "VIDEO");
+    }
+
+    function installAutoplayUnmute() {
+        if (autoplayUnmuteInstalled || !global.document ||
+            typeof global.document.addEventListener !== "function") return;
+        ["pointerdown", "touchstart", "keydown"].forEach((name) => {
+            global.document.addEventListener(name, unmuteAutoplayMedia, true);
+        });
+        autoplayUnmuteInstalled = true;
+    }
+
+    function unmuteAutoplayMedia() {
+        mutedAutoplayMedia.forEach((media) => {
+            if (media && !media.ended) media.muted = false;
+        });
+        mutedAutoplayMedia.clear();
+    }
+
+    function startAutoplayVideos() {
+        if (!global.document || typeof global.document.querySelectorAll !== "function") return;
+        Array.from(global.document.querySelectorAll("video[autoplay]")).forEach((media) => {
+            if (!media || !media.paused || media.ended || autoplayAttempts.has(media)) return;
+            autoplayAttempts.add(media);
+            let playing;
+            try {
+                playing = media.play();
+            } catch {
+                return;
+            }
+            if (!playing || typeof playing.catch !== "function") return;
+            playing.catch((error) => {
+                if (!error || error.name !== "NotAllowedError" || media.muted) throw error;
+                media.muted = true;
+                mutedAutoplayMedia.add(media);
+                installAutoplayUnmute();
+                return media.play();
+            }).catch(() => {
+                mutedAutoplayMedia.delete(media);
+                media.muted = false;
+            });
+        });
     }
 
     function installLegacyAudioConstructorFallback() {
@@ -151,6 +211,13 @@
     }
 
     function restoreLegacyMediaFallback() {
+        if (global.document && typeof global.document.removeEventListener === "function") {
+            ["pointerdown", "touchstart", "keydown"].forEach((name) => {
+                global.document.removeEventListener(name, unmuteAutoplayMedia, true);
+            });
+        }
+        autoplayUnmuteInstalled = false;
+        unmuteAutoplayMedia();
         if (legacyPlayBgmTag && legacyPlayBgmTag.start === legacyPlayBgmStart && nativeLegacyPlayBgmStart) {
             legacyPlayBgmTag.start = nativeLegacyPlayBgmStart;
         }
@@ -333,7 +400,10 @@
         if (exited) return;
         finishStalledAnimations();
         const kag = engine();
-        if (kag) pollLegacyGamepad(kag);
+        if (kag) {
+            pollLegacyGamepad(kag);
+            startAutoplayVideos();
+        }
         if (!readySent && kag) {
             readySent = true;
             event("READY", { checkpointAvailable: checkpointAvailable(), engine: "TYRANOSCRIPT" });

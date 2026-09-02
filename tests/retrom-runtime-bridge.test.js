@@ -18,6 +18,7 @@ function runtimeFixture({
     engineReadyAtConnect = true,
     stalledAnimation = false,
     blockedLegacyAudio = false,
+    blockedLegacyVideo = false,
 } = {}) {
     const windowListeners = new Map();
     const engineListeners = new Map();
@@ -78,8 +79,10 @@ function runtimeFixture({
         weaklyStop() { actions.push("pause"); },
         cancelWeakStop() { actions.push("resume"); },
     };
-    if (blockedLegacyAudio) {
+    if (blockedLegacyAudio || blockedLegacyVideo) {
         kag.tmp = { ready_audio: false };
+    }
+    if (blockedLegacyAudio) {
         kag.layer = { showEventLayer() { actions.push("legacy-audio:event-layer"); } };
         kag.ftag.nextOrder = () => { actions.push("legacy-audio:next-order"); };
         kag.ftag.master_tag = {
@@ -130,10 +133,21 @@ function runtimeFixture({
         },
         getAnimations() { return [animation]; },
     };
-    const BlockedHTMLMediaElement = blockedLegacyAudio ? class HTMLMediaElement {
+    const BlockedHTMLMediaElement = blockedLegacyAudio || blockedLegacyVideo ? class HTMLMediaElement {
+        constructor() {
+            this.autoplay = false;
+            this.ended = false;
+            this.muted = false;
+            this.paused = true;
+            this.tagName = "";
+        }
         dispatchEvent(event) { actions.push(`blocked-media:${event.type}`); }
         play() {
             actions.push("blocked-media:native-play");
+            if (this.tagName === "VIDEO" && this.muted) {
+                this.paused = false;
+                return Promise.resolve();
+            }
             return Promise.reject(Object.assign(new Error("autoplay blocked"), { name: "NotAllowedError" }));
         }
     } : undefined;
@@ -144,6 +158,11 @@ function runtimeFixture({
             actions.push(`blocked-audio:${src}`);
         }
     } : undefined;
+    const autoplayVideo = blockedLegacyVideo ? new BlockedHTMLMediaElement() : null;
+    if (autoplayVideo) {
+        autoplayVideo.autoplay = true;
+        autoplayVideo.tagName = "VIDEO";
+    }
     const runtime = {
         Audio: BlockedAudio,
         Howler: { _howls: [howl], volume(value) { actions.push(`volume:${value}`); } },
@@ -161,6 +180,7 @@ function runtimeFixture({
         },
         HTMLMediaElement: BlockedHTMLMediaElement,
         document: {
+            addEventListener(name) { actions.push(`document-listen:${name}`); },
             createElement(name) {
                 if (!blockedLegacyAudio || name !== "audio") return {};
                 actions.push("blocked-audio-element");
@@ -171,8 +191,10 @@ function runtimeFixture({
             dispatchEvent(event) { actions.push(`document:${event.type}`); },
             querySelectorAll(selector) {
                 if (selector === ".animated") return stalledAnimation ? [animated] : [];
+                if (selector === "video[autoplay]") return autoplayVideo ? [autoplayVideo] : [];
                 return legacyMedia ? [media] : [];
             },
+            removeEventListener(name) { actions.push(`document-unlisten:${name}`); },
         },
         KeyboardEvent: class KeyboardEvent {
             constructor(type) { this.type = type; }
@@ -255,6 +277,7 @@ function runtimeFixture({
 
     return {
         actions,
+        autoplayVideo,
         advanceTime(milliseconds) { now += milliseconds; },
         closeCalls: () => closeCalls,
         createBlockedMedia() { return new runtime.HTMLMediaElement(); },
@@ -324,6 +347,15 @@ test("lets Tyrano 4.x continue silently before a trusted audio gesture", async (
     assert.equal(activatedAudio.src, "./data/sound/activated.ogg");
     fixture.kag.ftag.master_tag.playbgm.start({target: "bgm"});
     assert.deepEqual(fixture.actions.slice(-1), ["legacy-audio:native-tag:bgm"]);
+});
+
+test("starts dynamically inserted Tyrano autoplay video muted when audible autoplay is blocked", async () => {
+    const fixture = runtimeFixture({ blockedLegacyVideo: true });
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 0));
+
+    assert.equal(fixture.autoplayVideo.paused, false);
+    assert.equal(fixture.autoplayVideo.muted, true);
+    assert.equal(fixture.actions.filter((value) => value === "blocked-media:native-play").length, 2);
 });
 
 test("checkpoints and restores the TyranoScript snapshot in the same wire format", async () => {
