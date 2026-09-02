@@ -19,6 +19,7 @@ function runtimeFixture({
     stalledAnimation = false,
     blockedLegacyAudio = false,
     blockedLegacyVideo = false,
+    detachedAutoplayVideo = false,
 } = {}) {
     const windowListeners = new Map();
     const engineListeners = new Map();
@@ -163,6 +164,30 @@ function runtimeFixture({
         autoplayVideo.autoplay = true;
         autoplayVideo.tagName = "VIDEO";
     }
+    const detachedVideoSource = detachedAutoplayVideo ? {
+        src: "./data/video/mov_06.webm",
+        removeAttribute(name) {
+            if (name === "src") this.src = "";
+            actions.push(`detached-source:remove-${name}`);
+        },
+    } : null;
+    const detachedVideo = detachedAutoplayVideo ? {
+        autoplay: true,
+        ended: false,
+        isConnected: true,
+        muted: false,
+        paused: false,
+        src: "./data/video/mov_06.webm",
+        tagName: "VIDEO",
+        load() { actions.push("detached-video:load"); },
+        pause() { this.paused = true; actions.push("detached-video:pause"); },
+        play() { return Promise.resolve(); },
+        querySelectorAll(selector) { return selector === "source" ? [detachedVideoSource] : []; },
+        removeAttribute(name) {
+            if (name === "src") this.src = "";
+            actions.push(`detached-video:remove-${name}`);
+        },
+    } : null;
     const runtime = {
         Audio: BlockedAudio,
         Howler: { _howls: [howl], volume(value) { actions.push(`volume:${value}`); } },
@@ -191,7 +216,9 @@ function runtimeFixture({
             dispatchEvent(event) { actions.push(`document:${event.type}`); },
             querySelectorAll(selector) {
                 if (selector === ".animated") return stalledAnimation ? [animated] : [];
-                if (selector === "video[autoplay]") return autoplayVideo ? [autoplayVideo] : [];
+                if (selector === "video[autoplay]") {
+                    return [autoplayVideo, detachedVideo].filter((video) => video && video.isConnected !== false);
+                }
                 return legacyMedia ? [media] : [];
             },
             removeEventListener(name) { actions.push(`document-unlisten:${name}`); },
@@ -282,6 +309,9 @@ function runtimeFixture({
         closeCalls: () => closeCalls,
         createBlockedMedia() { return new runtime.HTMLMediaElement(); },
         createLegacyAudio(src) { return new runtime.Audio(src); },
+        detachAutoplayVideo() { detachedVideo.isConnected = false; },
+        detachedVideo,
+        detachedVideoSource,
         kag,
         port,
         replies,
@@ -356,6 +386,24 @@ test("starts dynamically inserted Tyrano autoplay video muted when audible autop
     assert.equal(fixture.autoplayVideo.paused, false);
     assert.equal(fixture.autoplayVideo.muted, true);
     assert.equal(fixture.actions.filter((value) => value === "blocked-media:native-play").length, 2);
+});
+
+test("releases a partially buffered autoplay video after the game removes it", () => {
+    const fixture = runtimeFixture({ detachedAutoplayVideo: true });
+
+    fixture.detachAutoplayVideo();
+    fixture.watchdogTick();
+    fixture.watchdogTick();
+
+    assert.equal(fixture.detachedVideo.paused, true);
+    assert.equal(fixture.detachedVideo.src, "");
+    assert.equal(fixture.detachedVideoSource.src, "");
+    assert.deepEqual(fixture.actions.filter((action) => action.startsWith("detached-")), [
+        "detached-video:pause",
+        "detached-video:remove-src",
+        "detached-source:remove-src",
+        "detached-video:load",
+    ]);
 });
 
 test("checkpoints and restores the TyranoScript snapshot in the same wire format", async () => {

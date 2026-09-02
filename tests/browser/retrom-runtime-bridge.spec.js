@@ -192,6 +192,12 @@ test("restores the upstream sample in a fresh engine state and keeps gamepad inp
         const video = document.createElement("video");
         video.id = "retrom-blocked-autoplay-fixture";
         video.autoplay = true;
+        video.src = "/partially-buffered-mov-06.webm";
+        const source = document.createElement("source");
+        source.src = "/partially-buffered-mov-06-fallback.webm";
+        video.append(source);
+        video.pause = () => { window.__retromRemovedVideoPauses = (window.__retromRemovedVideoPauses || 0) + 1; };
+        video.load = () => { window.__retromRemovedVideoLoads = (window.__retromRemovedVideoLoads || 0) + 1; };
         video.play = () => {
             window.__retromAutoplayAttempts = (window.__retromAutoplayAttempts || 0) + 1;
             if (!video.muted) {
@@ -200,6 +206,7 @@ test("restores the upstream sample in a fresh engine state and keeps gamepad inp
             window.__retromAutoplayStarted = true;
             return Promise.resolve();
         };
+        window.__retromAutoplayVideo = video;
         document.body.append(video);
     });
     await expect.poll(() => page.evaluate(() => ({
@@ -211,4 +218,11 @@ test("restores the upstream sample in a fresh engine state and keeps gamepad inp
     await expect.poll(() => page.evaluate(() =>
         document.getElementById("retrom-blocked-autoplay-fixture").muted)).toBe(false);
     await page.evaluate(() => document.getElementById("retrom-blocked-autoplay-fixture").remove());
+    await expect.poll(() => page.evaluate(() => ({
+        connected: window.__retromAutoplayVideo.isConnected,
+        loads: window.__retromRemovedVideoLoads || 0,
+        pauses: window.__retromRemovedVideoPauses || 0,
+        source: window.__retromAutoplayVideo.querySelector("source").getAttribute("src"),
+        src: window.__retromAutoplayVideo.getAttribute("src"),
+    }))).toEqual({ connected: false, loads: 1, pauses: 1, source: null, src: null });
 });
