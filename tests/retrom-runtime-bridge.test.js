@@ -10,15 +10,28 @@ function plain(value) {
     return JSON.parse(JSON.stringify(value));
 }
 
-function runtimeFixture({ emitLoadComplete = true, checkpointReady = true } = {}) {
+function runtimeFixture({
+    emitLoadComplete = true,
+    checkpointReady = true,
+    legacyEngine = false,
+    legacyMedia = false,
+    engineReadyAtConnect = true,
+    stalledAnimation = false,
+    blockedLegacyAudio = false,
+} = {}) {
     const windowListeners = new Map();
     const engineListeners = new Map();
     const frameCallbacks = [];
+    const intervalCallbacks = new Map();
     const replies = [];
     const actions = [];
     let closeCalls = 0;
     let restoreOptions = null;
     let canShowMenu = checkpointReady;
+    let now = 0;
+    const gamepadState = {
+        buttons: Array.from({ length: 17 }, () => ({ pressed: false })),
+    };
     const kag = {
         ftag: { array_tag: [{ name: "s" }], current_order_index: 0 },
         key_mouse: { util: { canShowMenu: () => canShowMenu } },
@@ -31,9 +44,12 @@ function runtimeFixture({ emitLoadComplete = true, checkpointReady = true } = {}
                     current_order_index: 4,
                     layer: { message: "fixture" },
                     stat: JSON.parse(JSON.stringify(kag.stat)),
-                    three: { models: {}, stat: {} },
                     title: "fixture",
                 };
+                if (legacyEngine) {
+                    this.snap.img_data = "";
+                    this.snap.save_date = "fixture-date";
+                } else this.snap.three = { models: {}, stat: {} };
                 callback();
             },
             loadGameData(snapshot, options) {
@@ -59,37 +75,129 @@ function runtimeFixture({ emitLoadComplete = true, checkpointReady = true } = {}
                 });
             },
         },
-        on(eventName, callback) {
-            const event = eventName.split(".")[0];
-            engineListeners.set(event, [...(engineListeners.get(event) || []), { callback }]);
-        },
-        once(eventName, callback) {
-            const event = eventName.split(".")[0];
-            engineListeners.set(event, [...(engineListeners.get(event) || []), { callback }]);
-        },
-        off(eventName) {
-            if (eventName.startsWith(".")) engineListeners.clear();
-        },
         weaklyStop() { actions.push("pause"); },
         cancelWeakStop() { actions.push("resume"); },
     };
+    if (blockedLegacyAudio) {
+        kag.tmp = { ready_audio: false };
+        kag.layer = { showEventLayer() { actions.push("legacy-audio:event-layer"); } };
+        kag.ftag.nextOrder = () => { actions.push("legacy-audio:next-order"); };
+        kag.ftag.master_tag = {
+            playbgm: { start(pm) { actions.push(`legacy-audio:native-tag:${pm.target}`); } },
+        };
+    }
+    if (!legacyEngine) {
+        kag.on = (eventName, callback) => {
+            const event = eventName.split(".")[0];
+            engineListeners.set(event, [...(engineListeners.get(event) || []), { callback }]);
+        };
+        kag.once = (eventName, callback) => {
+            const event = eventName.split(".")[0];
+            engineListeners.set(event, [...(engineListeners.get(event) || []), { callback }]);
+        };
+        kag.off = (eventName) => {
+            if (eventName.startsWith(".")) engineListeners.clear();
+        };
+    } else {
+        delete kag.weaklyStop;
+        delete kag.cancelWeakStop;
+    }
     const howl = {
         _sounds: [{ _id: 7 }],
         pause(id) { actions.push(`audio-pause:${id}`); },
         play(id) { actions.push(`audio-resume:${id}`); },
         playing(id) { return id === 7; },
     };
+    const media = {
+        ended: false,
+        paused: false,
+        volume: 1,
+        pause() { this.paused = true; actions.push("media-pause"); },
+        play() { this.paused = false; actions.push("media-resume"); return Promise.resolve(); },
+    };
+    const animation = {
+        currentTime: 0,
+        effect: { getComputedTiming: () => ({ duration: 500 }) },
+        playState: "running",
+        startTime: null,
+    };
+    const animated = {
+        dispatchEvent(event) {
+            actions.push(`animation:${event.type}`);
+            animation.currentTime = 500;
+            animation.playState = "finished";
+            animation.startTime = 0;
+        },
+        getAnimations() { return [animation]; },
+    };
+    const BlockedHTMLMediaElement = blockedLegacyAudio ? class HTMLMediaElement {
+        dispatchEvent(event) { actions.push(`blocked-media:${event.type}`); }
+        play() {
+            actions.push("blocked-media:native-play");
+            return Promise.reject(Object.assign(new Error("autoplay blocked"), { name: "NotAllowedError" }));
+        }
+    } : undefined;
+    const BlockedAudio = blockedLegacyAudio ? class Audio extends BlockedHTMLMediaElement {
+        constructor(src = "") {
+            super();
+            this.src = src;
+            actions.push(`blocked-audio:${src}`);
+        }
+    } : undefined;
     const runtime = {
+        Audio: BlockedAudio,
         Howler: { _howls: [howl], volume(value) { actions.push(`volume:${value}`); } },
-        TYRANO: { kag },
+        TYRANO: engineReadyAtConnect ? { kag } : {},
         addEventListener(name, callback) { windowListeners.set(name, callback); },
         cancelAnimationFrame() {},
+        clearInterval(identifier) { intervalCallbacks.delete(identifier); },
         clearTimeout,
         close() { closeCalls += 1; },
+        CustomEvent: class CustomEvent {
+            constructor(type, init) { this.type = type; this.detail = init.detail; }
+        },
+        Event: class Event {
+            constructor(type) { this.type = type; }
+        },
+        HTMLMediaElement: BlockedHTMLMediaElement,
+        document: {
+            createElement(name) {
+                if (!blockedLegacyAudio || name !== "audio") return {};
+                actions.push("blocked-audio-element");
+                const mediaElement = new BlockedHTMLMediaElement();
+                mediaElement.src = "";
+                return mediaElement;
+            },
+            dispatchEvent(event) { actions.push(`document:${event.type}`); },
+            querySelectorAll(selector) {
+                if (selector === ".animated") return stalledAnimation ? [animated] : [];
+                return legacyMedia ? [media] : [];
+            },
+        },
+        KeyboardEvent: class KeyboardEvent {
+            constructor(type) { this.type = type; }
+        },
+        navigator: {
+            userActivation: blockedLegacyAudio ? { hasBeenActive: false, isActive: false } : undefined,
+            getGamepads() {
+                return [{
+                    buttons: gamepadState.buttons,
+                    connected: true,
+                    index: 0,
+                    mapping: "standard",
+                }];
+            },
+        },
         parent: null,
+        performance: { now: () => now },
         postMessage() {},
         removeEventListener(name) { windowListeners.delete(name); },
         requestAnimationFrame(callback) { frameCallbacks.push(callback); return frameCallbacks.length; },
+        setInterval(callback) {
+            const identifier = intervalCallbacks.size + 1;
+            intervalCallbacks.set(identifier, callback);
+            return identifier;
+        },
         setTimeout,
     };
     runtime.parent = runtime;
@@ -147,17 +255,76 @@ function runtimeFixture({ emitLoadComplete = true, checkpointReady = true } = {}
 
     return {
         actions,
+        advanceTime(milliseconds) { now += milliseconds; },
         closeCalls: () => closeCalls,
+        createBlockedMedia() { return new runtime.HTMLMediaElement(); },
+        createLegacyAudio(src) { return new runtime.Audio(src); },
         kag,
         port,
         replies,
         request,
         restoreOptions: () => restoreOptions,
         runtime,
+        media,
+        setGamepadButton(index, pressed) { gamepadState.buttons[index] = { pressed }; },
         setCheckpointReady(value) { canShowMenu = value; },
         setCurrentTag(name) { kag.ftag.array_tag[0].name = name; },
+        setEngineReady() { runtime.TYRANO.kag = kag; },
+        tick() {
+            const callback = frameCallbacks.shift();
+            if (callback) callback();
+        },
+        watchdogTick() {
+            for (const callback of intervalCallbacks.values()) callback();
+        },
     };
 }
+
+test("reports READY through the watchdog when iframe animation frames are throttled", () => {
+    const fixture = runtimeFixture({ engineReadyAtConnect: false });
+    assert.equal(fixture.replies.some((value) => value.type === "READY"), false);
+
+    fixture.setEngineReady();
+    fixture.watchdogTick();
+
+    assert.equal(fixture.replies.filter((value) => value.type === "READY").length, 1);
+});
+
+test("finishes an old Tyrano CSS animation that never receives a browser start time", () => {
+    const fixture = runtimeFixture({ stalledAnimation: true });
+
+    fixture.advanceTime(749);
+    fixture.watchdogTick();
+    assert.equal(fixture.actions.includes("animation:animationend"), false);
+
+    fixture.advanceTime(1);
+    fixture.watchdogTick();
+    assert.equal(fixture.actions.filter((value) => value === "animation:animationend").length, 1);
+    fixture.advanceTime(1_000);
+    fixture.watchdogTick();
+    assert.equal(fixture.actions.filter((value) => value === "animation:animationend").length, 1);
+});
+
+test("lets Tyrano 4.x continue silently before a trusted audio gesture", async () => {
+    const fixture = runtimeFixture({ blockedLegacyAudio: true, legacyEngine: true });
+    assert.equal(fixture.kag.tmp.ready_audio, true);
+
+    const automaticAudio = fixture.createLegacyAudio("./data/sound/automatic.ogg");
+    assert.equal(automaticAudio.src, "");
+    assert.equal(fixture.actions.includes("blocked-audio-element"), true);
+    assert.equal(fixture.actions.includes("blocked-audio:./data/sound/automatic.ogg"), false);
+    await automaticAudio.play();
+
+    assert.deepEqual(fixture.actions.slice(-1), ["blocked-media:play"]);
+    fixture.kag.ftag.master_tag.playbgm.start({target: "se"});
+    assert.deepEqual(fixture.actions.slice(-2), ["legacy-audio:event-layer", "legacy-audio:next-order"]);
+
+    fixture.runtime.navigator.userActivation.hasBeenActive = true;
+    const activatedAudio = fixture.createLegacyAudio("./data/sound/activated.ogg");
+    assert.equal(activatedAudio.src, "./data/sound/activated.ogg");
+    fixture.kag.ftag.master_tag.playbgm.start({target: "bgm"});
+    assert.deepEqual(fixture.actions.slice(-1), ["legacy-audio:native-tag:bgm"]);
+});
 
 test("checkpoints and restores the TyranoScript snapshot in the same wire format", async () => {
     const fixture = runtimeFixture();
@@ -196,6 +363,44 @@ test("recognizes a completed restore when the engine omits load-complete", async
 
     assert.equal(restored.type, "RESTORE_RESULT");
     assert.equal(fixture.kag.stat.f.marker, "B");
+});
+
+test("checkpoints and restores a TyranoScript 4.x snapshot without modern event APIs", async () => {
+    const fixture = runtimeFixture({ legacyEngine: true });
+    fixture.kag.stat.f.marker = "B";
+    const saved = await fixture.request("CHECKPOINT");
+    assert.equal(saved.type, "CHECKPOINT_RESULT");
+    const decoded = JSON.parse(new TextDecoder().decode(new Uint8Array(saved.body.data)));
+    assert.equal(decoded.snapshot.three, undefined);
+    assert.equal(decoded.snapshot.stat.f.marker, "B");
+    assert.equal(typeof fixture.kag.once, "function");
+
+    fixture.kag.stat.f.marker = "C";
+    const restored = await fixture.request("RESTORE", { data: saved.body.data });
+    assert.equal(restored.type, "RESTORE_RESULT");
+    assert.equal(fixture.kag.stat.f.marker, "B");
+});
+
+test("projects a standard gamepad B edge through the TyranoScript 4.x event facade", () => {
+    const fixture = runtimeFixture({ legacyEngine: true });
+    let observed = null;
+    fixture.kag.once("gamepad-pressdown.retrom-test", (event) => { observed = event.detail.button_name; });
+
+    fixture.setGamepadButton(1, true);
+    fixture.tick();
+
+    assert.equal(observed, "B");
+    assert.equal(fixture.actions.includes("document:keydown"), true);
+});
+
+test("pauses, resumes, and changes volume on TyranoScript 4.x HTML media", async () => {
+    const fixture = runtimeFixture({ legacyEngine: true, legacyMedia: true });
+    assert.equal((await fixture.request("PAUSE")).type, "PAUSE_RESULT");
+    assert.equal(fixture.media.paused, true);
+    assert.equal((await fixture.request("RESUME")).type, "RESUME_RESULT");
+    assert.equal(fixture.media.paused, false);
+    assert.equal((await fixture.request("SET_VOLUME", { value: 0.35 })).type, "SET_VOLUME_RESULT");
+    assert.equal(fixture.media.volume, 0.35);
 });
 
 test("keeps checkpoints unavailable while the engine is between stable menu states", async () => {
