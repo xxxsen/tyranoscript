@@ -39,6 +39,8 @@
     let legacyPlayBgmStart = null;
     let autoplayUnmuteInstalled = false;
     const autoplayAttempts = new WeakSet();
+    const autoplayMedia = new Set();
+    const detachedAutoplayMedia = new WeakSet();
     const mutedAutoplayMedia = new Set();
     const pendingAnimations = new WeakMap();
 
@@ -158,7 +160,10 @@
 
     function startAutoplayVideos() {
         if (!global.document || typeof global.document.querySelectorAll !== "function") return;
-        Array.from(global.document.querySelectorAll("video[autoplay]")).forEach((media) => {
+        const connected = Array.from(global.document.querySelectorAll("video[autoplay]"));
+        connected.forEach((media) => {
+            autoplayMedia.add(media);
+            detachedAutoplayMedia.delete(media);
             if (!media || !media.paused || media.ended || autoplayAttempts.has(media)) return;
             autoplayAttempts.add(media);
             let playing;
@@ -179,6 +184,36 @@
                 media.muted = false;
             });
         });
+        autoplayMedia.forEach((media) => {
+            if (!media || media.isConnected !== false) return;
+            if (!detachedAutoplayMedia.has(media)) {
+                detachedAutoplayMedia.add(media);
+                return;
+            }
+            releaseAutoplayMedia(media);
+            autoplayMedia.delete(media);
+        });
+    }
+
+    function releaseAutoplayMedia(media) {
+        mutedAutoplayMedia.delete(media);
+        try {
+            if (typeof media.pause === "function") media.pause();
+        } catch {}
+        try {
+            if (typeof media.removeAttribute === "function") media.removeAttribute("src");
+            if (typeof media.querySelectorAll === "function") {
+                Array.from(media.querySelectorAll("source")).forEach((source) => {
+                    if (source && typeof source.removeAttribute === "function") source.removeAttribute("src");
+                });
+            }
+            if (typeof media.load === "function") media.load();
+        } catch {}
+    }
+
+    function releaseAutoplayMediaAll() {
+        autoplayMedia.forEach(releaseAutoplayMedia);
+        autoplayMedia.clear();
     }
 
     function installLegacyAudioConstructorFallback() {
@@ -891,6 +926,7 @@
                     legacyListeners = [];
                     pausedHowls = [];
                     pausedMedia = [];
+                    releaseAutoplayMediaAll();
                     restoreLegacyMediaFallback();
                     global.close = nativeClose;
                     send(requestId, "CLEANUP_RESULT", {});
