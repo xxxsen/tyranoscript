@@ -2,6 +2,7 @@ const { expect, test } = require("@playwright/test");
 const { resolve } = require("node:path");
 
 test("restores the upstream sample in a fresh engine state and keeps gamepad input active", async ({ page }) => {
+    test.setTimeout(120_000);
     await page.addInitScript({ path: resolve(__dirname, "../../retrom-runtime/bridge.js") });
     await page.addInitScript(() => {
         window.__retromGamepads = [];
@@ -112,11 +113,78 @@ test("restores the upstream sample in a fresh engine state and keeps gamepad inp
     await expect.poll(() => page.evaluate(() => window.__retromGamepadButton)).toBe("B");
 
     const screenshot = await page.evaluate(async () => {
+        window.__retromHtml2CanvasCalled = false;
+        window.html2canvas = () => {
+            window.__retromHtml2CanvasCalled = true;
+            throw new Error("bundled html2canvas must not be used by the bridge");
+        };
+        document.getElementById("tyrano_base").querySelectorAll = () => {
+            throw new Error("screenshot traversal must be incrementally bounded");
+        };
+        document.createTreeWalker = () => {
+            throw new Error("screenshot traversal must not enter unbounded descendant trees");
+        };
+        const target = document.getElementById("tyrano_base");
+        target.replaceChildren();
+        const gameRoot = document.createElement("div");
+        gameRoot.id = "root_layer_game";
+        const base = document.createElement("div");
+        base.className = "base_fore";
+        base.style.cssText = "position:absolute;inset:0;background-image:url(data/bgimage/title.jpg)";
+        gameRoot.append(base);
+        const foreground = document.createElement("div");
+        foreground.style.cssText = "position:absolute;inset:0;background:rgb(255,0,255)";
+        target.append(gameRoot, foreground);
         const reply = await window.__retromRuntimeRequest("SCREENSHOT");
-        return { bytes: reply.body.data.byteLength, mediaType: reply.body.mediaType, type: reply.type };
+        const bitmap = await createImageBitmap(new Blob([reply.body.data], { type: reply.body.mediaType }));
+        const sample = document.createElement("canvas");
+        sample.width = bitmap.width;
+        sample.height = bitmap.height;
+        const context = sample.getContext("2d");
+        context.drawImage(bitmap, 0, 0);
+        const center = Array.from(context.getImageData(
+            Math.floor(bitmap.width / 2), Math.floor(bitmap.height / 2), 1, 1,
+        ).data);
+        bitmap.close();
+        return {
+            bytes: reply.body.data.byteLength,
+            center,
+            html2canvasCalled: window.__retromHtml2CanvasCalled,
+            mediaType: reply.body.mediaType,
+            type: reply.type,
+        };
     });
     expect(screenshot.type).toBe("SCREENSHOT_RESULT");
+    expect(screenshot.html2canvasCalled).toBe(false);
     expect(screenshot.mediaType).toBe("image/jpeg");
     expect(screenshot.bytes).toBeGreaterThan(100);
     expect(screenshot.bytes).toBeLessThanOrEqual(2 * 1024 * 1024);
+    expect(screenshot.center[0]).toBeGreaterThan(200);
+    expect(screenshot.center[1]).toBeLessThan(80);
+    expect(screenshot.center[2]).toBeGreaterThan(200);
+
+    const domScreenshot = await page.evaluate(async () => {
+        document.querySelectorAll("#root_layer_game > .base_fore, #root_layer_game > .base_back").forEach((layer) => {
+            layer.style.backgroundImage = "none";
+        });
+        const target = document.getElementById("tyrano_base");
+        const panel = document.createElement("div");
+        panel.style.cssText = "position:absolute;left:100px;top:100px;width:420px;height:180px;" +
+            "background:#18233a;color:#fff;font:24px sans-serif;text-align:center;padding:20px";
+        panel.textContent = "Language Settings";
+        target.append(panel);
+        const reply = await window.__retromRuntimeRequest("SCREENSHOT");
+        panel.remove();
+        return {
+            bytes: reply.body.data.byteLength,
+            html2canvasCalled: window.__retromHtml2CanvasCalled,
+            mediaType: reply.body.mediaType,
+            type: reply.type,
+        };
+    });
+    expect(domScreenshot.type).toBe("SCREENSHOT_RESULT");
+    expect(domScreenshot.html2canvasCalled).toBe(false);
+    expect(domScreenshot.mediaType).toBe("image/jpeg");
+    expect(domScreenshot.bytes).toBeGreaterThan(100);
+    expect(domScreenshot.bytes).toBeLessThanOrEqual(2 * 1024 * 1024);
 });
