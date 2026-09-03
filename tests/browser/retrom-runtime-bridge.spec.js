@@ -61,11 +61,13 @@ test("restores the upstream sample in a fresh engine state and keeps gamepad inp
     const result = await page.evaluate(async () => {
         const paused = await window.__retromRuntimeRequest("PAUSE");
         window.TYRANO.kag.stat.f.__retrom_checkpoint_marker = "B";
+        window.TYRANO.kag.variable.sf.__retrom_system_marker = "B";
         const checkpoint = await window.__retromRuntimeRequest("CHECKPOINT");
         if (checkpoint.type !== "CHECKPOINT_RESULT") return { checkpointType: checkpoint.type };
         const decodedCheckpoint = JSON.parse(new TextDecoder().decode(new Uint8Array(checkpoint.body.data)));
         const resumed = await window.__retromRuntimeRequest("RESUME");
         window.TYRANO.kag.stat.f.__retrom_checkpoint_marker = "C";
+        window.TYRANO.kag.variable.sf.__retrom_system_marker = "C";
         const restored = await window.__retromRuntimeRequest("RESTORE", { data: checkpoint.body.data });
         return {
             checkpointBytes: checkpoint.body.data.byteLength,
@@ -77,6 +79,8 @@ test("restores the upstream sample in a fresh engine state and keeps gamepad inp
             restoreCode: restored.body.code || null,
             restoreType: restored.type,
             savedScenario: decodedCheckpoint.snapshot.stat.current_scenario,
+            savedSystemMarker: decodedCheckpoint.systemVariables.__retrom_system_marker,
+            systemMarker: window.TYRANO.kag.variable.sf.__retrom_system_marker,
         };
     });
     expect(result).toEqual({
@@ -89,6 +93,8 @@ test("restores the upstream sample in a fresh engine state and keeps gamepad inp
         restoreCode: null,
         restoreType: "RESTORE_RESULT",
         savedScenario: expect.any(String),
+        savedSystemMarker: "B",
+        systemMarker: "B",
     });
     expect(result.checkpointBytes).toBeGreaterThan(100);
 
