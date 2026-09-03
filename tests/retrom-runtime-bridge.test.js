@@ -16,6 +16,7 @@ function runtimeFixture({
     legacyEngine = false,
     legacyMedia = false,
     engineReadyAtConnect = true,
+    menuReadyAtConnect = true,
     stalledAnimation = false,
     blockedLegacyAudio = false,
     blockedLegacyVideo = false,
@@ -35,9 +36,13 @@ function runtimeFixture({
         buttons: Array.from({ length: 17 }, () => ({ pressed: false })),
     };
     const kag = {
+        chara: {},
+        event: {},
         ftag: { array_tag: [{ name: "s" }], current_order_index: 0 },
         key_mouse: { util: { canShowMenu: () => canShowMenu } },
+        layer: {},
         stat: { current_scenario: "first.ks", f: { marker: "A" } },
+        variable: { sf: { Language: 2, system: { backlog: [] } } },
         menu: {
             snap: null,
             snapSave(_title, callback, thumbnail) {
@@ -105,6 +110,9 @@ function runtimeFixture({
     } else {
         delete kag.weaklyStop;
         delete kag.cancelWeakStop;
+    }
+    for (const component of [kag.chara, kag.event, kag.ftag, kag.key_mouse, kag.layer, kag.menu]) {
+        component.kag = menuReadyAtConnect ? kag : null;
     }
     const howl = {
         _sounds: [{ _id: 7 }],
@@ -323,6 +331,11 @@ function runtimeFixture({
         setCheckpointReady(value) { canShowMenu = value; },
         setCurrentTag(name) { kag.ftag.array_tag[0].name = name; },
         setEngineReady() { runtime.TYRANO.kag = kag; },
+        setMenuReady() {
+            for (const component of [kag.chara, kag.event, kag.ftag, kag.key_mouse, kag.layer, kag.menu]) {
+                component.kag = kag;
+            }
+        },
         tick() {
             const callback = frameCallbacks.shift();
             if (callback) callback();
@@ -341,6 +354,16 @@ test("reports READY through the watchdog when iframe animation frames are thrott
     fixture.watchdogTick();
 
     assert.equal(fixture.replies.filter((value) => value.type === "READY").length, 1);
+});
+
+test("keeps checkpoints unavailable until all Tyrano engine components are bound", async () => {
+    const fixture = runtimeFixture({ menuReadyAtConnect: false });
+    assert.equal(fixture.replies.find((value) => value.type === "READY").body.checkpointAvailable, false);
+
+    fixture.setMenuReady();
+    fixture.watchdogTick();
+
+    assert.equal((await fixture.request("PROBE")).body.checkpointAvailable, true);
 });
 
 test("finishes an old Tyrano CSS animation that never receives a browser start time", () => {
@@ -423,12 +446,15 @@ test("checkpoints and restores the TyranoScript snapshot in the same wire format
     assert.equal(saved.body.format, "tyranoscript-snapshot-v1");
     const decoded = JSON.parse(new TextDecoder().decode(new Uint8Array(saved.body.data)));
     assert.equal(decoded.snapshot.stat.f.marker, "B");
+    assert.deepEqual(plain(decoded.systemVariables), { Language: 2, system: { backlog: [] } });
     assert.equal(decoded.snapshot.img_data, undefined);
 
     fixture.kag.stat.f.marker = "C";
+    fixture.kag.variable.sf = { Language: 3, system: { backlog: ["fresh launch"] } };
     const restored = await fixture.request("RESTORE", { data: saved.body.data });
     assert.equal(restored.type, "RESTORE_RESULT");
     assert.equal(fixture.kag.stat.f.marker, "B");
+    assert.deepEqual(plain(fixture.kag.variable.sf), { Language: 2, system: { backlog: [] } });
     assert.deepEqual(plain(fixture.restoreOptions()), { auto_next: "no", bgm_over: "false" });
     assert.deepEqual(fixture.actions.slice(0, 2), ["checkpoint:false", "restore"]);
 });
@@ -443,6 +469,50 @@ test("recognizes a completed restore when the engine omits load-complete", async
 
     assert.equal(restored.type, "RESTORE_RESULT");
     assert.equal(fixture.kag.stat.f.marker, "B");
+});
+
+test("defers restore until the initial Tyrano scenario reaches a stable menu state", async () => {
+    const fixture = runtimeFixture();
+    const saved = await fixture.request("CHECKPOINT");
+    fixture.setCheckpointReady(false);
+
+    const restoring = fixture.request("RESTORE", { data: saved.body.data });
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 5));
+    assert.equal(fixture.actions.includes("restore"), false);
+
+    fixture.setCheckpointReady(true);
+    const restored = await restoring;
+
+    assert.equal(restored.type, "RESTORE_RESULT");
+    assert.equal(fixture.actions.includes("restore"), true);
+});
+
+test("keeps legacy checkpoints readable without replacing the fresh launch system variables", async () => {
+    const fixture = runtimeFixture();
+    const saved = await fixture.request("CHECKPOINT");
+    const decoded = JSON.parse(new TextDecoder().decode(new Uint8Array(saved.body.data)));
+    delete decoded.systemVariables;
+    const legacy = new TextEncoder().encode(JSON.stringify(decoded)).buffer;
+    fixture.kag.variable.sf = { Language: 3, system: { backlog: [] } };
+
+    const restored = await fixture.request("RESTORE", { data: legacy });
+
+    assert.equal(restored.type, "RESTORE_RESULT");
+    assert.deepEqual(plain(fixture.kag.variable.sf), { Language: 3, system: { backlog: [] } });
+});
+
+test("rejects malformed checkpoint system variables before mutating the engine", async () => {
+    const fixture = runtimeFixture();
+    const saved = await fixture.request("CHECKPOINT");
+    const decoded = JSON.parse(new TextDecoder().decode(new Uint8Array(saved.body.data)));
+    decoded.systemVariables = [];
+    const malformed = new TextEncoder().encode(JSON.stringify(decoded)).buffer;
+
+    const restored = await fixture.request("RESTORE", { data: malformed });
+
+    assert.equal(restored.type, "ERROR");
+    assert.deepEqual(plain(restored.body), { code: "TYRANOSCRIPT_CHECKPOINT_INVALID" });
+    assert.deepEqual(plain(fixture.kag.variable.sf), { Language: 2, system: { backlog: [] } });
 });
 
 test("checkpoints and restores a TyranoScript 4.x snapshot without modern event APIs", async () => {

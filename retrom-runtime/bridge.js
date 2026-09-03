@@ -70,6 +70,12 @@
         return kag;
     }
 
+    function engineInitialized(kag) {
+        return Boolean(kag && kag.menu && kag.menu.kag === kag && kag.ftag && kag.ftag.kag === kag &&
+            kag.layer && kag.layer.kag === kag && kag.key_mouse && kag.key_mouse.kag === kag &&
+            kag.event && kag.event.kag === kag && kag.chara && kag.chara.kag === kag);
+    }
+
     function eventIdentity(value) {
         const separator = value.indexOf(".");
         return {
@@ -302,7 +308,7 @@
 
     function checkpointAvailable() {
         const kag = engine();
-        if (exited || !kag || !kag.stat || typeof kag.stat.current_scenario !== "string" ||
+        if (exited || !engineInitialized(kag) || !kag.stat || typeof kag.stat.current_scenario !== "string" ||
             !kag.stat.current_scenario || kag.stat.is_wait || kag.stat.is_adding_text ||
             !stableCheckpointTag(kag)) return false;
         const canShowMenu = kag.key_mouse && kag.key_mouse.util && kag.key_mouse.util.canShowMenu;
@@ -502,13 +508,21 @@
         return snapshot;
     }
 
-    function encodeCheckpoint(snapshot) {
+    function validateSystemVariables(systemVariables) {
+        if (!systemVariables || typeof systemVariables !== "object" || Array.isArray(systemVariables)) {
+            throw new Error("TYRANOSCRIPT_CHECKPOINT_INVALID");
+        }
+        return systemVariables;
+    }
+
+    function encodeCheckpoint(snapshot, systemVariables) {
         let bytes;
         try {
             bytes = encoder.encode(JSON.stringify({
                 engine: "TYRANOSCRIPT",
                 schemaVersion: 1,
                 snapshot: validateSnapshot(snapshot),
+                systemVariables: validateSystemVariables(systemVariables),
             }));
         } catch (error) {
             if (stableCode(error, "") === "TYRANOSCRIPT_CHECKPOINT_INVALID") throw error;
@@ -530,11 +544,16 @@
         } catch {
             throw new Error("TYRANOSCRIPT_CHECKPOINT_INVALID");
         }
-        if (!ownKeys(value, ["engine", "schemaVersion", "snapshot"]) || value.engine !== "TYRANOSCRIPT" ||
+        const legacyShape = ownKeys(value, ["engine", "schemaVersion", "snapshot"]);
+        const currentShape = ownKeys(value, ["engine", "schemaVersion", "snapshot", "systemVariables"]);
+        if (!legacyShape && !currentShape || value.engine !== "TYRANOSCRIPT" ||
             value.schemaVersion !== 1) {
             throw new Error("TYRANOSCRIPT_CHECKPOINT_INVALID");
         }
-        return cloneJSON(validateSnapshot(value.snapshot));
+        return {
+            snapshot: cloneJSON(validateSnapshot(value.snapshot)),
+            systemVariables: currentShape ? cloneJSON(validateSystemVariables(value.systemVariables)) : null,
+        };
     }
 
     function checkpoint() {
@@ -560,8 +579,9 @@
                 else {
                     try {
                         const snapshot = cloneJSON(kag.menu.snap);
+                        const systemVariables = cloneJSON(kag.variable && kag.variable.sf || {});
                         runtimeDebug("checkpoint", "cloned");
-                        const encoded = encodeCheckpoint(snapshot);
+                        const encoded = encodeCheckpoint(snapshot, systemVariables);
                         runtimeDebug("checkpoint", `encoded:${encoded.byteLength}`);
                         resolve(encoded);
                     } catch (encodeError) {
@@ -579,7 +599,8 @@
 
     function restore(data) {
         if (exited) return Promise.reject(new Error("TYRANOSCRIPT_CHECKPOINT_RESTORE_FAILED"));
-        const snapshot = decodeCheckpoint(data);
+        const checkpoint = decodeCheckpoint(data);
+        const snapshot = checkpoint.snapshot;
         const kag = engine();
         if (!kag) return Promise.reject(new Error("TYRANOSCRIPT_RUNTIME_NOT_READY"));
         return new Promise((resolve, reject) => {
@@ -609,16 +630,31 @@
             function observeRestoreOrder(eventObject) {
                 if (eventObject && eventObject.scenario === "make.ks") makeStarted = true;
             }
-            try {
-                if (!legacyRestore) {
-                    kag.once("load-complete.retrom-runtime-restore", () => finish());
-                    kag.on("nextorder.retrom-runtime-restore", observeRestoreOrder);
+            function startRestore() {
+                pollTimer = 0;
+                try {
+                    if (!legacyRestore) {
+                        kag.once("load-complete.retrom-runtime-restore", () => finish());
+                        kag.on("nextorder.retrom-runtime-restore", observeRestoreOrder);
+                    }
+                    if (checkpoint.systemVariables) {
+                        if (!kag.variable || typeof kag.variable !== "object") {
+                            throw new Error("TYRANOSCRIPT_CHECKPOINT_RESTORE_FAILED");
+                        }
+                        kag.variable.sf = cloneJSON(checkpoint.systemVariables);
+                    }
+                    kag.menu.loadGameData(snapshot, { auto_next: "no", bgm_over: "false" });
+                    pollTarget();
+                } catch {
+                    finish(new Error("TYRANOSCRIPT_CHECKPOINT_RESTORE_FAILED"));
                 }
-                kag.menu.loadGameData(snapshot, { auto_next: "no", bgm_over: "false" });
-                pollTarget();
-            } catch {
-                finish(new Error("TYRANOSCRIPT_CHECKPOINT_RESTORE_FAILED"));
             }
+            function waitForStableEngine() {
+                if (completed) return;
+                if (checkpointAvailable()) startRestore();
+                else pollTimer = global.setTimeout(waitForStableEngine, 16);
+            }
+            waitForStableEngine();
         });
     }
 
